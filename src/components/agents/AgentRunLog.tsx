@@ -17,7 +17,7 @@ const statusDot: Record<string, string> = {
   running: "bg-yellow-400 animate-pulse",
 };
 
-export default function AgentRunLog({ agentId: _ }: AgentRunLogProps) {
+export default function AgentRunLog({ agentId: _agentId }: AgentRunLogProps) {
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
       <h4 className="text-sm font-semibold text-gray-200 uppercase tracking-wide">Run History</h4>
