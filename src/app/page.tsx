@@ -1,6 +1,11 @@
-import { redirect } from "next/navigation";
+"use client";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-// Root redirects to the dashboard; middleware handles auth gating.
 export default function RootPage() {
-  redirect("/dashboard");
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/dashboard");
+  }, [router]);
+  return null;
 }

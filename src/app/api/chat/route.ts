@@ -290,37 +290,47 @@ export async function POST(req: NextRequest) {
         }
         console.warn(`Anthropic unavailable (${isRateLimited ? "429" : "credit"}) — trying Groq`);
       } catch (err) {
-        console.warn("Anthropic network error — trying Groq:", (err as Error).message);
+        // Catches ConnectTimeoutError, AbortError, TypeError: fetch failed, etc.
+        const msg = (err as Error & { code?: string })?.code || (err as Error).message || "";
+        console.warn("Anthropic unreachable — falling back to Groq:", msg);
       }
     }
 
     // ── 2. Groq with full tool-calling loop ────────────────────────────────
     if (hasGroq) {
-      // First attempt: normal history budget
-      let result = await runGroq(system || "", messages || [], HISTORY_BUDGET_CHARS);
+      try {
+        // First attempt: normal history budget
+        let result = await runGroq(system || "", messages || [], HISTORY_BUDGET_CHARS);
 
-      // Second attempt: token error → cut history in half
-      if (result.tokenError) {
-        console.warn("Groq token limit — retrying with shorter history");
-        result = await runGroq(system || "", messages || [], HISTORY_BUDGET_CHARS / 3);
-      }
+        // Second attempt: token error → cut history to 1/3
+        if (result.tokenError) {
+          console.warn("Groq token limit — retrying with shorter history");
+          result = await runGroq(system || "", messages || [], HISTORY_BUDGET_CHARS / 3);
+        }
 
-      // Third attempt: still token error or rate limited → search-and-format (no history)
-      if (result.tokenError || result.text === "RATE_LIMITED") {
-        console.warn("Groq blocked — switching to search-and-format fallback");
+        // Third attempt: still token error or rate limited → search-and-format (no history)
+        if (result.tokenError || result.text === "RATE_LIMITED") {
+          console.warn("Groq blocked — switching to search-and-format fallback");
+          if (hasTavily) {
+            const text = applyAcreFilter(await searchAndFormat(system || "", lastUserMsg));
+            return NextResponse.json({ content: [{ type: "text", text }], model: "tavily+groq/format" });
+          }
+          return NextResponse.json({
+            content: [{ type: "text", text: "⏳ AI is busy. Please start a new chat to clear history, then try again." }],
+          });
+        }
+
+        return NextResponse.json({
+          content: [{ type: "text", text: applyAcreFilter(result.text) || "⚠️ No response received. Please try again." }],
+          model: "groq/llama-3.3-70b-versatile",
+        });
+      } catch (groqErr) {
+        console.warn("Groq error — falling back to Tavily:", (groqErr as Error).message);
         if (hasTavily) {
           const text = applyAcreFilter(await searchAndFormat(system || "", lastUserMsg));
           return NextResponse.json({ content: [{ type: "text", text }], model: "tavily+groq/format" });
         }
-        return NextResponse.json({
-          content: [{ type: "text", text: "⏳ AI is busy. Please start a new chat to clear history, then try again." }],
-        });
       }
-
-      return NextResponse.json({
-        content: [{ type: "text", text: applyAcreFilter(result.text) || "⚠️ No response received. Please try again." }],
-        model: "groq/llama-3.3-70b-versatile",
-      });
     }
 
     // ── 3. Tavily + Groq format (no Groq chat loop available) ─────────────
