@@ -1,19 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// ── Token estimation ──────────────────────────────────────────────────────
-// Rough estimate: 1 token ≈ 4 chars. Groq free tier TPM limit: 12,000.
-// We cap input at 7,000 tokens to leave room for output + system prompt.
-const MAX_INPUT_CHARS = 7000 * 4; // ~28,000 chars for history
+// ── Token budget ──────────────────────────────────────────────────────────
+// Groq free tier: 12,000 TPM. Cap history at ~6k chars to leave room for
+// system prompt + search results + output.
+const HISTORY_BUDGET_CHARS = 6000;
 
 function trimMessages(
   messages: Array<{ role: string; content: string }>,
   budgetChars: number
 ): Array<{ role: string; content: string }> {
-  // Always keep the last message (the new user question)
   if (!messages.length) return messages;
   const result: typeof messages = [];
   let used = 0;
-  // Walk from newest to oldest, keep what fits
   for (let i = messages.length - 1; i >= 0; i--) {
     const len = (messages[i].content || "").length;
     if (used + len > budgetChars && result.length > 0) break;
@@ -25,7 +23,7 @@ function trimMessages(
 
 // ── Tavily search ─────────────────────────────────────────────────────────
 async function searchWeb(query: string): Promise<string> {
-  if (!process.env.TAVILY_API_KEY) return `[No TAVILY_API_KEY. Query: "${query}"]`;
+  if (!process.env.TAVILY_API_KEY) return "";
   try {
     const r = await fetch("https://api.tavily.com/search", {
       method: "POST",
@@ -44,22 +42,33 @@ async function searchWeb(query: string): Promise<string> {
     const lines = results
       .map((res) => `TITLE: ${res.title}\nURL: ${res.url}\nSNIPPET: ${res.content}`)
       .join("\n\n---\n\n");
-    return (data.answer ? `ANSWER: ${data.answer}\n\n` : "") + (lines || "No results.");
+    return (data.answer ? `ANSWER: ${data.answer}\n\n` : "") + (lines || "");
   } catch {
-    return `[Search failed for: "${query}"]`;
+    return "";
   }
 }
 
-// ── Tavily-only fallback (no AI, just raw search results) ─────────────────
-async function tavilyFallback(userMessage: string): Promise<string> {
-  const results = await searchWeb(userMessage);
-  if (!results || results.startsWith("[")) {
-    return "⚠️ All AI providers are unavailable right now and search also failed. Please try again in a moment.";
-  }
-  return `Here are the latest search results for your query:\n\n${results}\n\n---\n*Results from Tavily web search — AI summarization unavailable at this moment.*`;
+// ── Groq: single call, no tool loop (for formatting search results) ───────
+async function groqFormat(prompt: string): Promise<string> {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 2000,
+      temperature: 0.1,
+    }),
+  });
+  if (!res.ok) return "";
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || "";
 }
 
-// ── Groq tool-calling loop ────────────────────────────────────────────────
+// ── Groq: full tool-calling loop ──────────────────────────────────────────
 interface GroqMsg {
   role: string;
   content: string | null;
@@ -67,42 +76,36 @@ interface GroqMsg {
   tool_call_id?: string;
 }
 
+const SEARCH_TOOL = [
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description:
+        "Search the web for real-time property listings, parcel records, foreclosures, owner data. " +
+        "Search Regrid.com for parcel/APN data. Search PropertyRadar.com for distress data.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query including city, state, and current year" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+];
+
+type GroqResult = { text: string; tokenError: boolean };
+
 async function runGroq(
   systemPrompt: string,
   messages: Array<{ role: string; content: string }>,
-  maxTokens: number,
-  retryWithFewerMessages = false
-): Promise<{ text: string; tokenError: boolean }> {
-  // Trim history to fit token budget. On retry, be even more aggressive.
-  const budget = retryWithFewerMessages ? MAX_INPUT_CHARS / 4 : MAX_INPUT_CHARS;
-  const trimmed = trimMessages(messages, budget);
-
+  budgetChars: number
+): Promise<GroqResult> {
+  const trimmed = trimMessages(messages, budgetChars);
   const groqMessages: GroqMsg[] = [
     { role: "system", content: systemPrompt },
     ...trimmed.map((m) => ({ role: m.role, content: m.content })),
-  ];
-
-  // Cap output tokens to leave headroom under TPM limit
-  const cappedTokens = Math.min(maxTokens, 2000);
-
-  const tools = [
-    {
-      type: "function",
-      function: {
-        name: "web_search",
-        description:
-          "Search the web for real-time property listings, parcel records, foreclosures, owner data. " +
-          "Search Regrid.com for parcel/APN data. Search PropertyRadar.com for distress data. " +
-          "Always use to find current, real information.",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "Specific search query including city, state and current year" },
-          },
-          required: ["query"],
-        },
-      },
-    },
   ];
 
   for (let i = 0; i < 8; i++) {
@@ -115,9 +118,9 @@ async function runGroq(
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
         messages: groqMessages,
-        tools,
+        tools: SEARCH_TOOL,
         tool_choice: "auto",
-        max_tokens: cappedTokens,
+        max_tokens: 2000,
         temperature: 0.15,
       }),
     });
@@ -125,14 +128,14 @@ async function runGroq(
     if (res.status === 429) return { text: "RATE_LIMITED", tokenError: false };
 
     const data = await res.json();
-
-    // Detect token-too-large errors
     if (data.error) {
       const msg: string = data.error.message || "";
-      if (msg.includes("too large") || msg.includes("tokens per minute") || msg.includes("TPM")) {
-        return { text: "", tokenError: true };
-      }
-      return { text: `⚠️ ${msg}`, tokenError: false };
+      const isTokenError =
+        msg.includes("too large") ||
+        msg.includes("tokens per minute") ||
+        msg.includes("TPM") ||
+        msg.includes("Request too large");
+      return { text: isTokenError ? "" : `⚠️ ${msg}`, tokenError: isTokenError };
     }
 
     const choice = data.choices?.[0];
@@ -161,10 +164,48 @@ async function runGroq(
   return { text: last?.content || "", tokenError: false };
 }
 
+// ── Search-then-format fallback (Tavily → Groq format, no history) ────────
+// Used when the full Groq loop is blocked by token limits or rate limits.
+// Searches Tavily, then asks Groq to format results as deal blocks with no history baggage.
+async function searchAndFormat(systemPrompt: string, userMessage: string): Promise<string> {
+  const query = userMessage.slice(0, 300);
+  const searchResults = await searchWeb(query);
+
+  if (!searchResults) {
+    return "⚠️ Search is unavailable right now. Please try again in a moment.";
+  }
+
+  if (!process.env.GROQ_API_KEY) {
+    return `Search results (AI formatting unavailable):\n\n${searchResults}`;
+  }
+
+  // Extract only the deal output format rules from the system prompt
+  const dealFormat = systemPrompt.includes("<<<DEAL>>>")
+    ? systemPrompt.slice(systemPrompt.indexOf("<<<DEAL>>>") - 200)
+    : `Format each real property as:
+<<<DEAL>>>
+{ "address":"full numbered street address","details":"size/type/details","status":"strong","statusLabel":"Strong Opportunity","isQCT":false,"isOZ":false,"riskScore":"Low","feasibilityScore":8,"dealSignals":["signal"],"source":"source name","listingUrl":"url","owner":{"name":"","address":"","apn":"","ownerType":"","yearsOwned":""},"financials":[{"label":"Asking","value":"$X"},{"label":"Per Acre","value":"$X"},{"label":"Est. Units","value":"X"},{"label":"Land %","value":"X%","highlight":true}] }
+<<<END_DEAL>>>`;
+
+  const formatPrompt = `You are a real estate deal analyst. The user asked: "${userMessage}"
+
+Below are real web search results. Extract every property that matches what the user asked for and format each one as a <<<DEAL>>> block. Only include properties with real numbered street addresses (not intersections). Only include current listings.
+
+SEARCH RESULTS:
+${searchResults.slice(0, 10000)}
+
+${dealFormat}
+
+Output only deal blocks plus a brief summary sentence. Do not invent data — use only what the search results contain.`;
+
+  const formatted = await groqFormat(formatPrompt);
+  return formatted || `I found search results but couldn't format them. Here's what was found:\n\n${searchResults.slice(0, 2000)}`;
+}
+
 // ── Anthropic call ────────────────────────────────────────────────────────
 async function callAnthropic(body: Record<string, unknown>) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000); // 20s timeout
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
     return await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -195,15 +236,14 @@ export async function POST(req: NextRequest) {
     const hasGroq = !!process.env.GROQ_API_KEY;
     const hasTavily = !!process.env.TAVILY_API_KEY;
 
-    // Extract last user message for Tavily fallback
-    const lastUserMsg = [...(messages || [])].reverse().find((m: { role: string }) => m.role === "user")?.content || "";
+    const lastUserMsg =
+      [...(messages || [])].reverse().find((m: { role: string }) => m.role === "user")?.content || "";
 
-    // ── 1. Try Anthropic ──────────────────────────────────────────────────
+    // ── 1. Anthropic (primary) ─────────────────────────────────────────────
     if (hasAnthropic) {
       try {
         const res = await callAnthropic(body);
         const data = await res.json();
-
         const isRateLimited = res.status === 429;
         const isCreditError =
           data?.error?.type === "authentication_error" ||
@@ -219,46 +259,39 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── 2. Try Groq ───────────────────────────────────────────────────────
+    // ── 2. Groq with full tool-calling loop ────────────────────────────────
     if (hasGroq) {
-      let result = await runGroq(system || "", messages || [], max_tokens, false);
+      // First attempt: normal history budget
+      let result = await runGroq(system || "", messages || [], HISTORY_BUDGET_CHARS);
 
-      // If token limit hit, retry with shorter history
+      // Second attempt: token error → cut history in half
       if (result.tokenError) {
-        console.warn("Groq token limit hit — retrying with trimmed history");
-        result = await runGroq(system || "", messages || [], max_tokens, true);
+        console.warn("Groq token limit — retrying with shorter history");
+        result = await runGroq(system || "", messages || [], HISTORY_BUDGET_CHARS / 3);
       }
 
-      // If still token error, try Tavily fallback
-      if (result.tokenError) {
-        console.warn("Groq still over limit — falling back to Tavily direct search");
+      // Third attempt: still token error or rate limited → search-and-format (no history)
+      if (result.tokenError || result.text === "RATE_LIMITED") {
+        console.warn("Groq blocked — switching to search-and-format fallback");
         if (hasTavily) {
-          const text = await tavilyFallback(lastUserMsg);
-          return NextResponse.json({ content: [{ type: "text", text }], model: "tavily/direct" });
+          const text = await searchAndFormat(system || "", lastUserMsg);
+          return NextResponse.json({ content: [{ type: "text", text }], model: "tavily+groq/format" });
         }
-        return NextResponse.json({ content: [{ type: "text", text: "⚠️ Request too large. Please start a new chat to clear history and try again." }] });
-      }
-
-      if (result.text === "RATE_LIMITED") {
-        // Groq rate limited — try Tavily
-        console.warn("Groq rate limited — falling back to Tavily");
-        if (hasTavily) {
-          const text = await tavilyFallback(lastUserMsg);
-          return NextResponse.json({ content: [{ type: "text", text }], model: "tavily/direct" });
-        }
-        return NextResponse.json({ content: [{ type: "text", text: "⏳ All AI providers are busy. Wait 30 seconds and try again." }] });
+        return NextResponse.json({
+          content: [{ type: "text", text: "⏳ AI is busy. Please start a new chat to clear history, then try again." }],
+        });
       }
 
       return NextResponse.json({
-        content: [{ type: "text", text: result.text || "⚠️ No response. Please try again." }],
+        content: [{ type: "text", text: result.text || "⚠️ No response received. Please try again." }],
         model: "groq/llama-3.3-70b-versatile",
       });
     }
 
-    // ── 3. Tavily-only fallback ───────────────────────────────────────────
+    // ── 3. Tavily + Groq format (no Groq chat loop available) ─────────────
     if (hasTavily) {
-      const text = await tavilyFallback(lastUserMsg);
-      return NextResponse.json({ content: [{ type: "text", text }], model: "tavily/direct" });
+      const text = await searchAndFormat(system || "", lastUserMsg);
+      return NextResponse.json({ content: [{ type: "text", text }], model: "tavily+groq/format" });
     }
 
     return NextResponse.json({
