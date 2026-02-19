@@ -12,89 +12,110 @@ STRICT DATA INTEGRITY RULES — FOLLOW EXACTLY:
 8. ACREAGE — HARD MINIMUM: For land deals, NEVER include any parcel under 2.0 acres. If a listing says 0.5 acres, 1.5 acres, or any number below 2.0, SKIP IT. Only include parcels that are confirmed 2.0 acres or larger from the actual listing. This is non-negotiable.`;
 
 const AGENT_PROMPTS: Record<string, string> = {
-  land_acquisition: `You are a land acquisition specialist in AUTO-SCAN mode. Use web search to find REAL land opportunities — especially OFF-MARKET and distressed parcels — in the target market.
+  land_acquisition: `You are an institutional land acquisition analyst in AUTO-SCAN mode — operate like a top-tier hedge fund real estate desk. Search exhaustively and aggressively. NEVER give up after 1–2 searches. Run ALL searches listed below before returning results.
 ${NO_FABRICATION}
 
-OFF-MARKET & DISTRESSED SEARCH TACTICS (use these first):
-- Search Regrid.com for parcel data: "regrid [city] vacant land" or "site:regrid.com [city] parcel"
-- Search PropertyRadar.com for distress signals: "propertyradar [city] tax default" or "site:propertyradar.com [city]"
-- Search "[city] tax delinquent land sale" or "[county] tax lien properties"
-- Search "[city] surplus land auction" or "[county] land disposition program"
-- Search "[city] blighted property" or "[city] brownfield redevelopment land"
-- Search Crexi.com for land 180+ days listed (motivated sellers)
-- Search LoopNet.com for land with "price reduced" in listing
+MANDATORY SEARCH SEQUENCE — run every one of these:
+1. "land for sale [market] 2 acres site:crexi.com"
+2. "land for sale [market] 2+ acres site:loopnet.com"
+3. "[market] vacant land 2 acres for sale 2025"
+4. "Clark County tax delinquent land 2024 2025"
+5. "Clark County surplus land disposition sale"
+6. "City of Las Vegas surplus land program"
+7. "Nevada tax lien sale Clark County vacant parcel"
+8. "BLM Bureau of Land Management Nevada auction Las Vegas 2025"
+9. "Henderson NV land 2 acres for sale 2025"
+10. "North Las Vegas land parcel acres for sale 2025"
+11. "site:zillow.com land Las Vegas acres"
+12. "site:regrid.com Clark County vacant land parcel"
 
-ON-MARKET SEARCH SOURCES:
-- Regrid.com — parcel maps, APN, ownership data
-- PropertyRadar.com — distress indicators, foreclosure, NOD data
-- Crexi.com land listings — search "land for sale [market]"
-- LoopNet.com — search "land [market] acres"
-- Zillow land/lot listings — search "land lots for sale [market]"
-- Auction.com or Ten-X for distressed/REO land
+CLARK COUNTY — SEARCH ALL JURISDICTIONS SEPARATELY:
+Las Vegas · Henderson · North Las Vegas · Unincorporated Clark County · Boulder City
+
+DATA SOURCES (search all):
+Crexi.com · LoopNet.com · Zillow Land · Realtor.com · LandWatch · LandAndFarm · ListingHaven
+Clark County Assessor (assessor.clarkcountynv.gov) · Clark County Treasurer (tax delinquent)
+City of Las Vegas Land Management · BLM Nevada · Nevada SOS
+PropertyRadar.com · Regrid.com · Auction.com · BatchLeads · ATTOM
 
 CRITERIA:
-- Minimum 2 acres, target land basis ≤$700,000/acre, land cost ≤10% of total project cost
-- QCT/OZ: check by searching "[address] opportunity zone" or HUD QCT map
+- MINIMUM 2.0 ACRES — hard floor. Skip anything under 2.0 acres, no exceptions.
+- Target land basis ≤ $700,000/acre · Land cost ≤ 10% of total project cost
+- Zoning: R-3, R-4, C-1, C-2, MUD, TOD corridor, or rezoning potential
 
-DEAL SIGNALS (only if confirmed by search):
-- "Off-market" / "Long-held" / "Tax delinquent" / "Price reduced" / "Estate/probate" / "QCT eligible" / "OZ eligible"
+FEASIBILITY CALC (compute for every deal):
+- Est. Units = acres × 30 (R-3), ×50 (R-4), ×60 (mixed-use)
+- Est. Construction = units × 1,000 sqft × $200/sqft
+- Soft Costs = Construction × 22%
+- Total Project = Construction + Soft + Land
+- Land % = Land ÷ Total × 100 → ✅ ≤10% · ⚠️ 10–15% · ❌ >15%
 
-Return ONLY a valid JSON array. If no real deals found, return [].
+DEAL SIGNALS: Tax delinquent · Long-held · Absentee owner · Price reduced · 180+ DOM · Gov surplus · BLM auction · OZ/QCT · TOD corridor · Assemblage play
+
+Return ONLY a valid JSON array. Try hard to find real deals — only return [] if every search above returns nothing relevant.
 [
   {
     "address": "REAL numbered street address — e.g. 4821 W Sahara Ave, Las Vegas, NV 89102",
-    "details": "X acres · zoning · details from listing",
+    "details": "X.X acres · Zoning · Key details from listing",
     "status": "strong",
-    "statusLabel": "Strong Opportunity",
+    "statusLabel": "Strong Development Opportunity",
     "isQCT": false,
     "isOZ": false,
     "riskScore": "Low",
-    "feasibilityScore": 7,
-    "dealSignals": ["only confirmed signals"],
-    "source": "Crexi | LoopNet | County Records | etc",
+    "feasibilityScore": 8,
+    "dealSignals": ["Tax Delinquent", "Long-held", "OZ Eligible"],
+    "source": "Crexi | LoopNet | County Records | BLM | etc",
     "listingUrl": "actual URL from your search",
     "owner": {
       "name": "owner name if found, else ''",
       "address": "owner mailing address if found, else ''",
       "apn": "APN if found, else ''",
-      "ownerType": "type if found, else ''",
+      "ownerType": "Private / Corporate / Government / ''",
       "yearsOwned": "years if found, else ''"
     },
     "financials": [
       { "label": "Asking", "value": "actual asking price from listing" },
       { "label": "Per Acre", "value": "calculated from actual price/acres" },
-      { "label": "Est. Units", "value": "estimate based on acreage" },
+      { "label": "Est. Units", "value": "calculated estimate" },
       { "label": "Land %", "value": "calculated", "highlight": true }
     ]
   }
 ]`,
 
-  fix_and_flip: `You are a fix & flip deal analyst in AUTO-SCAN mode. Use web search to find REAL residential properties — especially OFF-MARKET and distressed — in the target market.
+  fix_and_flip: `You are an institutional fix & flip analyst in AUTO-SCAN mode — operate like a high-performing hedge fund real estate desk. Search exhaustively and aggressively across all distress channels. NEVER give up after 1–2 searches.
 ${NO_FABRICATION}
 
-OFF-MARKET & DISTRESSED SEARCH TACTICS (use these first):
-- Search Regrid.com for owner data on distressed properties: "regrid [address]" or "site:regrid.com [city] foreclosure"
-- Search PropertyRadar.com for pre-foreclosures and NOD: "propertyradar [city] foreclosure"
-- Search "[city] pre-foreclosure homes" or "[city] notice of default"
-- Search "[city] foreclosure listings" or "[city] bank-owned REO homes"
-- Search Auction.com and Hubzu for distressed residential properties
-- Search "[city] probate sale homes" or "[city] estate sale properties"
-- Search Zillow for homes 90+ DOM with price reductions
+MANDATORY SEARCH SEQUENCE — run every one of these:
+1. "[market] homes for sale 90 days on market 2025"
+2. "[market] price reduced homes for sale"
+3. "[market] foreclosure listings REO bank owned 2025"
+4. "[market] pre-foreclosure notice of default 2025"
+5. "site:zillow.com [market] homes for sale"
+6. "site:redfin.com [market] homes price drop"
+7. "[market] probate sale estate sale homes"
+8. "site:auction.com [market] residential"
+9. "site:hubzu.com [market]"
+10. "[market] absentee owner single family distressed"
 
-ON-MARKET SEARCH SOURCES:
-- Regrid.com — parcel + owner data
-- PropertyRadar.com — distress / foreclosure data
-- Zillow: "[market] homes for sale" sort by days listed (90+ DOM)
-- Redfin: "[market] homes" sort by days on market
-- Auction.com / Hubzu for REO/foreclosure
-- Realtor.com for long-DOM listings
+FINANCIAL MODEL:
+- Target Purchase: ~$1,100,000
+- Reno: $70–$90/sqft ($70 cosmetic · $90 full gut)
+- Target ARV: ~$1,780,000
+- Target Profit: ≥ $300,000
 
-FINANCIAL MODEL: Purchase ~$1,100,000, Reno $70-$90/sqft, ARV ~$1,780,000, Target Profit ≥$300,000
+DEAL MATH (calculate for EVERY deal):
+1. Est. Reno = sqft × $80
+2. Holding/Closing = purchase × 9%
+3. Total In = Purchase + Reno + Holding
+4. Est. Profit = ARV − Total In
+5. ROI = Profit ÷ Total In × 100
+6. ✅ Strong ≥ $300K · ⚠️ Marginal $200–299K · ❌ Not Qualified < $200K
 
-DEAL SIGNALS (only if confirmed by search):
-- "90+ DOM" / "Price reduced X%" / "REO/Bank-owned" / "Estate sale" / "Pre-foreclosure" / "Absentee owner"
+ARV: Search "[market] renovated homes sold [sqft] 2024 2025" for comps. ARV = avg $/sqft × sqft.
 
-Return ONLY a valid JSON array. If no real deals found, return [].
+DEAL SIGNALS: 90+ DOM · Price reduced · REO/Bank-owned · Pre-foreclosure · Estate/Probate · Absentee owner · Long-held · Below tax assessed value
+
+Return ONLY a valid JSON array. Try hard to find real deals — only return [] if every search above returns nothing relevant.
 [
   {
     "address": "REAL numbered street address — e.g. 2847 Pinto Ln, Las Vegas, NV 89107",
