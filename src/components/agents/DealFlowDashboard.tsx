@@ -605,6 +605,36 @@ export default function DealFlowDashboard() {
     return () => { Object.values(scanIntervals.current).forEach(clearInterval); };
   }, [autoScan, runScan]);
 
+  // AI property lookup — triggered from DealCard research buttons
+  const aiLookupProperty = useCallback((query: string) => {
+    setActiveTab("chat");
+    setInput(query);
+    // Slight delay so tab switch + input set renders before programmatic send
+    setTimeout(() => {
+      setInput("");
+      store.addQuery(activeAgent, marketLabel, query);
+      store.setChatForAgent(activeAgent, (prev) => [...prev, { role: "user", content: query }]);
+      setLoading(true);
+      const ctx = selectedMarket === "custom" ? customMarket : `${market.name} (${market.county})`;
+      fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 2000,
+          system: `You are a real estate data researcher. Use web_search to find accurate, current information about the requested property. Search the specific platform requested. Return all data you find: price, days on market, owner info, tax records, comps — whatever is available. Always include the source URL. Do NOT fabricate data.`,
+          messages: [{ role: "user", content: query }],
+        }),
+      }).then(r => r.json()).then(d => {
+        const text = (d.content as Array<{ type: string; text?: string }>)
+          ?.map((i) => (i.type === "text" ? i.text : "")).filter(Boolean).join("\n") || "⚠️ No data found.";
+        store.setChatForAgent(activeAgent, (prev) => [...prev, { role: "assistant", content: text }]);
+      }).catch(() => {
+        store.setChatForAgent(activeAgent, (prev) => [...prev, { role: "assistant", content: "⚠️ Research failed. Please try again." }]);
+      }).finally(() => setLoading(false));
+    }, 100);
+  }, [activeAgent, marketLabel, market, selectedMarket, customMarket, store]);
+
   // Chat send
   const send = useCallback(async () => {
     if (!input.trim() || loading) return;
@@ -793,7 +823,7 @@ export default function DealFlowDashboard() {
               </button>
             </div>
             {showHistory && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 300, overflowY: "auto", paddingRight: 2 }}>
                 {sessions.map((session) => (
                   <div key={session.id} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
                     <button
@@ -920,6 +950,7 @@ export default function DealFlowDashboard() {
             isPipelined={store.isPipelined}
             onRemove={store.removeFromLeads}
             onResearch={setResearchDeal}
+            onAiLookup={aiLookupProperty}
           />
         )}
 
@@ -932,6 +963,7 @@ export default function DealFlowDashboard() {
             onLookup={setLookupDeal}
             onAddOutreach={store.addOutreach}
             onResearch={setResearchDeal}
+            onAiLookup={aiLookupProperty}
           />
         )}
 
@@ -976,6 +1008,7 @@ export default function DealFlowDashboard() {
                         onSaveToPipeline={store.saveToPipeline}
                         isSaved={store.isPipelined(d)}
                         onResearch={setResearchDeal}
+            onAiLookup={aiLookupProperty}
                         color={agent.color}
                       />
                     ))}
@@ -993,6 +1026,7 @@ export default function DealFlowDashboard() {
                   onSaveToPipeline={(deal) => store.saveToPipeline({ ...deal, agentId: activeAgent })}
                   isPipelined={store.isPipelined}
                   onResearch={setResearchDeal}
+            onAiLookup={aiLookupProperty}
                 />
               ))}
               {loading && (

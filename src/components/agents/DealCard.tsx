@@ -27,6 +27,7 @@ interface DealCardProps {
   onSaveToPipeline?: (deal: Deal) => void;
   isSaved?: boolean;
   onResearch?: (deal: Deal) => void;
+  onAiLookup?: (query: string) => void;
 }
 
 export function DealCard({
@@ -37,6 +38,7 @@ export function DealCard({
   onSaveToPipeline,
   isSaved = false,
   onResearch,
+  onAiLookup,
 }: DealCardProps) {
   const resolvedColor = color ?? AGENT_COLOR[deal.agentId ?? "land_acquisition"] ?? "#C8A23C";
   const c = STATUS_COLOR[deal.status] || "#888";
@@ -172,6 +174,35 @@ export function DealCard({
               <div style={{ fontSize: 14, fontWeight: 700, color: f.highlight ? c : "#f0ece2", marginTop: 3 }}>{f.value}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* AI-powered property research buttons */}
+      {!compact && onAiLookup && (
+        <div style={{ marginTop: 14, padding: "10px 12px", background: "rgba(0,0,0,0.2)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)" }}>
+          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+            🤖 AI Property Research — click to search &amp; pull data
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[
+              { label: "Zillow", icon: "🏠", q: `Search Zillow for "${deal.address}". Find the listing and report: list price, Zestimate, days on market, price history, property details (sqft, beds, baths, year built), and any photos or condition notes. Include the URL.` },
+              { label: "Crexi", icon: "🏢", q: `Search Crexi.com for a listing at or near "${deal.address}". Report: asking price, price per acre/sqft, days on market, property type, zoning, and listing URL.` },
+              { label: "LoopNet", icon: "📊", q: `Search LoopNet.com for the property at "${deal.address}". Report: listing price, property details, days on market, cap rate if available, and listing URL.` },
+              { label: "County Records", icon: "🏛️", q: `Search Clark County Assessor records for "${deal.address}". Report: APN, assessed value, owner name, tax status, lot size, zoning, and any tax delinquency.` },
+              { label: "Tax Records", icon: "📋", q: `Search public tax records for "${deal.address}" in Clark County Nevada. Report: annual taxes, assessed value, tax delinquency status, owner of record, and parcel number (APN).` },
+              { label: "Comps", icon: "📈", q: `Find comparable sales within 0.5–1 mile of "${deal.address}" sold in the last 12 months. Report: address, sale price, sqft, price/sqft, and days on market for each comp. Calculate average price/sqft.` },
+            ].map(({ label, icon, q }) => (
+              <button
+                key={label}
+                onClick={() => onAiLookup(q)}
+                style={{ fontSize: 10, fontWeight: 600, color: resolvedColor, background: `${resolvedColor}0d`, border: `1px solid ${resolvedColor}30`, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all .15s" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = `${resolvedColor}20`; e.currentTarget.style.borderColor = resolvedColor; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = `${resolvedColor}0d`; e.currentTarget.style.borderColor = `${resolvedColor}30`; }}
+              >
+                {icon} {label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

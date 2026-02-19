@@ -185,7 +185,7 @@ async function runGroqScan(systemPrompt: string, userPrompt: string): Promise<st
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages, tools, tool_choice: "auto", max_tokens: 3000, temperature: 0.1 }),
+      body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages, tools, tool_choice: "auto", max_tokens: 2000, temperature: 0.1 }),
     });
 
     if (res.status === 429) return "[]";
@@ -225,38 +225,49 @@ export async function POST(req: NextRequest) {
         : `Use web_search NOW to find real residential investment properties ONLY in ${market} — current ${CURRENT_YEAR} listings only. MARKET LOCK: Every deal MUST be physically located in ${market}. NEVER return deals from other cities or states. PRIORITIZE off-market and distressed: search "${market} foreclosure listings ${CURRENT_YEAR}", "${market} REO bank-owned ${CURRENT_YEAR}", then search Zillow/Redfin for 90+ DOM listings in ${market}. ONLY return active listings from ${CURRENT_YEAR} or ${CURRENT_YEAR - 1}. Return ONLY deals with REAL NUMBERED STREET ADDRESSES in ${market}. Provide real listing URLs. Do NOT fabricate — return [] if no qualifying deals found.`;
 
     let text = "";
+    const fullSystem = systemPrompt + `\n\nCURRENT MARKET: ${market}\nCURRENT YEAR: ${CURRENT_YEAR}\nSEARCH DIRECTIVE: Run at least 8 different web searches across Crexi, LoopNet, Zillow, county records, tax delinquent lists, BLM, and all sub-markets before returning results. Do NOT give up after 1-2 searches.`;
 
-    // ── Groq path ──
-    if (process.env.GROQ_API_KEY && !process.env.ANTHROPIC_API_KEY?.startsWith("sk-ant")) {
-      text = await runGroqScan(systemPrompt + `\n\nCURRENT MARKET: ${market}\nCURRENT YEAR: ${CURRENT_YEAR}`, userPrompt);
-    } else {
-      // ── Anthropic path ──
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.ANTHROPIC_API_KEY!,
-          "anthropic-version": "2023-06-01",
-          "anthropic-beta": "web-search-2025-03-05",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 3000,
-          system: systemPrompt + `\n\nCURRENT MARKET: ${market}\nCURRENT YEAR: ${CURRENT_YEAR}`,
-          messages: [{ role: "user", content: userPrompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-        }),
-      });
+    // ── 1. Try Anthropic first (with timeout) ──
+    if (process.env.ANTHROPIC_API_KEY?.startsWith("sk-ant")) {
+      try {
+        const controller = new AbortController();
+        const abortTimer = setTimeout(() => controller.abort(), 20000);
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.ANTHROPIC_API_KEY!,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "web-search-2025-03-05",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 3000,
+            system: fullSystem,
+            messages: [{ role: "user", content: userPrompt }],
+            tools: [{ type: "web_search_20250305", name: "web_search" }],
+          }),
+        });
+        clearTimeout(abortTimer);
 
-      if (response.status === 429) {
-        return NextResponse.json({ deals: [], error: "Rate limited — try again in a moment", market, agentType }, { status: 200 });
+        if (response.status === 429) {
+          console.warn("Scan: Anthropic rate limited — falling back to Groq");
+        } else if (response.ok) {
+          const data = await response.json();
+          text = (data.content as Array<{ type: string; text?: string }>)
+            ?.map((i) => (i.type === "text" ? i.text : ""))
+            .filter(Boolean)
+            .join("") || "";
+        }
+      } catch (err) {
+        console.warn("Scan: Anthropic unreachable — falling back to Groq:", (err as Error).message);
       }
+    }
 
-      const data = await response.json();
-      text = (data.content as Array<{ type: string; text?: string }>)
-        ?.map((i) => (i.type === "text" ? i.text : ""))
-        .filter(Boolean)
-        .join("") || "";
+    // ── 2. Groq fallback (if Anthropic failed or unavailable) ──
+    if (!text && process.env.GROQ_API_KEY) {
+      text = await runGroqScan(fullSystem, userPrompt);
     }
 
     // Extract the JSON array from the response
