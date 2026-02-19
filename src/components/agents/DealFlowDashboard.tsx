@@ -76,8 +76,12 @@ OFF-MARKET SEARCH TACTICS:
 
 SEARCH SOURCES: Regrid.com, PropertyRadar.com, Crexi.com, LoopNet.com, Zillow land listings, Clark County Assessor, Nevada county tax/surplus sites, public records.
 
-CRITERIA:
-- Minimum 2 acres (but also consider contiguous small parcels that together reach 2+ acres), target land basis ≤$700,000/acre, land cost ≤10% of total project cost
+SIZE REQUIREMENT — ABSOLUTE HARD FILTER:
+- MINIMUM 2.0 ACRES per parcel. This is non-negotiable.
+- If a listing says 0.52 acres, 0.82 acres, 1.5 acres, 1.93 acres — ANY number below 2.0 — DO NOT include it. Skip it entirely.
+- Only exception: multiple contiguous parcels where the COMBINED total is confirmed 2+ acres and the owner is the same or they can be assembled.
+- ALWAYS check the listing's acreage before including a deal. If acreage is not stated in the listing, search for the APN or parcel size before including.
+- Target land basis ≤$700,000/acre, land cost ≤10% of total project cost
 - DEAL TYPES: Affordable Housing, Mixed-Use, Market-Rate Multifamily, Luxury Teardown, Off-Market Land
 
 DEAL STATUS: ✅ Strong Development Opportunity ⚠️ Rezoning Required ❌ Overpriced
@@ -579,7 +583,9 @@ export default function DealFlowDashboard() {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          system: `${agent.systemPrompt}\n\nCURRENT MARKET: ${ctx}\nCURRENT DATE: ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}\n\nMARKET SCOPE: When searching Clark County or Las Vegas, always cover ALL sub-markets: City of Las Vegas, Henderson NV, North Las Vegas NV, and unincorporated Clark County. A question about "Clark County" means search all of these. Never limit to just one city.\n\nQUESTION INTERPRETATION: Interpret every user question as a real estate search task. ANY question about land, parcels, acres, property, deals, or specific locations should trigger web_search immediately. Simple phrases like "2 car vacant parcel" mean search for a 2-acre vacant parcel. Never say you cannot help — always attempt a web search.\n\nADDRESS FORMAT — CRITICAL: Every deal MUST have a real street address with a house/building number (e.g. "4821 W Sahara Ave, Las Vegas, NV 89102"). NEVER use intersection format ("Main St & Flamingo Rd") — those cannot be verified or looked up. If you only find an intersection, skip that deal.\n\nCURRENCY — CRITICAL: Only return ACTIVE, CURRENT listings from the past 12 months. Always include the current year in your search queries. Do NOT present stale listings from 2+ years ago.\n\nIMPORTANT: Always use web_search to find real properties. Prioritize off-market and distressed opportunities. When you find deals, present each one wrapped in <<<DEAL>>>...<<<END_DEAL>>> delimiters so they render as interactive cards. Only leave owner/APN fields blank if you genuinely cannot find them — do not invent them.`,
+          system: `${agent.systemPrompt}\n\nCURRENT MARKET: ${ctx}\nCURRENT DATE: ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}\n\nMARKET SCOPE: When searching Clark County or Las Vegas, always cover ALL sub-markets: City of Las Vegas, Henderson NV, North Las Vegas NV, and unincorporated Clark County. A question about "Clark County" means search all of these. Never limit to just one city.\n\nQUESTION INTERPRETATION: Interpret every user question as a real estate search task. ANY question about land, parcels, acres, property, deals, or specific locations should trigger web_search immediately. Simple phrases like "2 car vacant parcel" mean search for a 2-acre vacant parcel. Never say you cannot help — always attempt a web search.\n\nSIZE FILTER — ABSOLUTE: For land deals, NEVER include any parcel under 2.0 acres. Check the acreage of every listing before including it. A 0.52-acre lot, a 1.5-acre lot, a 1.93-acre lot — all must be skipped. Only 2.0 acres and above qualify.
+
+ADDRESS FORMAT — CRITICAL: Every deal MUST have a real street address with a house/building number (e.g. "4821 W Sahara Ave, Las Vegas, NV 89102"). NEVER use intersection format ("Main St & Flamingo Rd") — those cannot be verified or looked up. If you only find an intersection, skip that deal.\n\nCURRENCY — CRITICAL: Only return ACTIVE, CURRENT listings from the past 12 months. Always include the current year in your search queries. Do NOT present stale listings from 2+ years ago.\n\nIMPORTANT: Always use web_search to find real properties. Prioritize off-market and distressed opportunities. When you find deals, present each one wrapped in <<<DEAL>>>...<<<END_DEAL>>> delimiters so they render as interactive cards. Only leave owner/APN fields blank if you genuinely cannot find them — do not invent them.`,
           messages: [...chat.filter((m) => m.role === "user" || m.role === "assistant"), { role: "user", content: msg }],
         }),
       });

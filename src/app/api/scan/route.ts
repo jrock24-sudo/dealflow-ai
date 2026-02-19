@@ -8,7 +8,8 @@ STRICT DATA INTEGRITY RULES — FOLLOW EXACTLY:
 4. ADDRESS FORMAT — CRITICAL: Every "address" field MUST be a real street address with a building number (e.g. "4821 W Sahara Ave, Las Vegas, NV 89102"). NEVER use intersection format ("Main St & Flamingo Rd"). Skip deals that only have intersection addresses.
 5. CURRENCY — CRITICAL: Only return CURRENT listings from the current year or previous year. NEVER return listings from 2+ years ago. Always search with the current year in your query.
 6. If you cannot find real qualifying current deals, return []. Do NOT invent deals.
-7. QCT/OZ: only mark true if confirmed via search. Default to false.`;
+7. QCT/OZ: only mark true if confirmed via search. Default to false.
+8. ACREAGE — HARD MINIMUM: For land deals, NEVER include any parcel under 2.0 acres. If a listing says 0.5 acres, 1.5 acres, or any number below 2.0, SKIP IT. Only include parcels that are confirmed 2.0 acres or larger from the actual listing. This is non-negotiable.`;
 
 const AGENT_PROMPTS: Record<string, string> = {
   land_acquisition: `You are a land acquisition specialist in AUTO-SCAN mode. Use web search to find REAL land opportunities — especially OFF-MARKET and distressed parcels — in the target market.
@@ -242,7 +243,17 @@ export async function POST(req: NextRequest) {
     const jsonMatch = text?.match(/\[[\s\S]*\]/) || text?.match(/\[[\s\S]*?\]/);
     if (jsonMatch) {
       try {
-        const deals = JSON.parse(jsonMatch[0]);
+        const rawDeals = JSON.parse(jsonMatch[0]) as Array<{ details?: string }>;
+
+        // Hard server-side filter: remove any land deal under 2 acres
+        const deals = agentType === "land_acquisition"
+          ? rawDeals.filter((d) => {
+              const m = (d.details || "").match(/(\d+\.?\d*)\s*acre/i);
+              if (!m) return true; // can't determine — keep for now
+              return parseFloat(m[1]) >= 2.0;
+            })
+          : rawDeals;
+
         return NextResponse.json({
           deals,
           scannedAt: new Date().toISOString(),

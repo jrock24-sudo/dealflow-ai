@@ -1,5 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// ── Acreage filter — applied to every land response ───────────────────────
+// Parses <<<DEAL>>> blocks and removes any parcel under minAcres.
+function extractAcreage(details: string): number | null {
+  const m = details.match(/(\d+\.?\d*)\s*acre/i);
+  return m ? parseFloat(m[1]) : null;
+}
+
+function filterDealBlocks(text: string, minAcres: number): string {
+  // Split into deal blocks and surrounding text
+  const parts = text.split(/(<<<DEAL>>>[\s\S]*?<<<END_DEAL>>>)/g);
+  return parts
+    .map((part) => {
+      if (!part.startsWith("<<<DEAL>>>")) return part;
+      try {
+        const jsonStr = part.replace("<<<DEAL>>>", "").replace("<<<END_DEAL>>>", "").trim();
+        const deal = JSON.parse(jsonStr);
+        const acres = extractAcreage(deal.details || "");
+        if (acres !== null && acres < minAcres) {
+          // Replace with a note so the user knows it was filtered
+          return `\n*[Skipped: ${deal.address} — ${acres} acres is below the 2-acre minimum]*\n`;
+        }
+      } catch {
+        // Can't parse → keep as-is
+      }
+      return part;
+    })
+    .join("");
+}
+
 // ── Token budget ──────────────────────────────────────────────────────────
 // Groq free tier: 12,000 TPM. Cap history at ~6k chars to leave room for
 // system prompt + search results + output.
@@ -239,6 +268,12 @@ export async function POST(req: NextRequest) {
     const lastUserMsg =
       [...(messages || [])].reverse().find((m: { role: string }) => m.role === "user")?.content || "";
 
+    // Is this a land search? Apply 2-acre minimum filter to responses.
+    const isLandAgent = (system || "").toLowerCase().includes("land acquisition") ||
+      (system || "").toLowerCase().includes("acre");
+    const applyAcreFilter = (txt: string) =>
+      isLandAgent ? filterDealBlocks(txt, 2) : txt;
+
     // ── 1. Anthropic (primary) ─────────────────────────────────────────────
     if (hasAnthropic) {
       try {
@@ -274,7 +309,7 @@ export async function POST(req: NextRequest) {
       if (result.tokenError || result.text === "RATE_LIMITED") {
         console.warn("Groq blocked — switching to search-and-format fallback");
         if (hasTavily) {
-          const text = await searchAndFormat(system || "", lastUserMsg);
+          const text = applyAcreFilter(await searchAndFormat(system || "", lastUserMsg));
           return NextResponse.json({ content: [{ type: "text", text }], model: "tavily+groq/format" });
         }
         return NextResponse.json({
@@ -283,7 +318,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json({
-        content: [{ type: "text", text: result.text || "⚠️ No response received. Please try again." }],
+        content: [{ type: "text", text: applyAcreFilter(result.text) || "⚠️ No response received. Please try again." }],
         model: "groq/llama-3.3-70b-versatile",
       });
     }
