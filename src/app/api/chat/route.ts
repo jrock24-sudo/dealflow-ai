@@ -116,19 +116,27 @@ async function runGroq(
 
 // ── Anthropic call ────────────────────────────────────────────────────────
 async function callAnthropic(body: Record<string, unknown>) {
-  return fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
-      "anthropic-beta": "web-search-2025-03-05",
-    },
-    body: JSON.stringify({
-      ...body,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "web-search-2025-03-05",
+      },
+      body: JSON.stringify({
+        ...body,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+      }),
+    });
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────
@@ -142,29 +150,35 @@ export async function POST(req: NextRequest) {
 
     // ── Try Anthropic first ──
     if (hasAnthropic) {
-      const res = await callAnthropic(body);
-      const data = await res.json();
+      try {
+        const res = await callAnthropic(body);
+        const data = await res.json();
 
-      // If rate limited or credit error → fall through to Groq
-      const isRateLimited = res.status === 429;
-      const isCreditError =
-        data?.error?.type === "authentication_error" ||
-        data?.error?.message?.toLowerCase().includes("credit") ||
-        data?.error?.message?.toLowerCase().includes("billing");
+        // If rate limited or credit error → fall through to Groq
+        const isRateLimited = res.status === 429;
+        const isCreditError =
+          data?.error?.type === "authentication_error" ||
+          data?.error?.message?.toLowerCase().includes("credit") ||
+          data?.error?.message?.toLowerCase().includes("billing");
 
-      if (!isRateLimited && !isCreditError) {
-        // Success or other error — return as-is
-        return NextResponse.json(data, { status: res.status });
-      }
+        if (!isRateLimited && !isCreditError) {
+          return NextResponse.json(data, { status: res.status });
+        }
 
-      // Log fallback reason
-      console.warn(`Anthropic unavailable (${isRateLimited ? "429" : "credit"}) — falling back to Groq`);
+        console.warn(`Anthropic unavailable (${isRateLimited ? "429" : "credit"}) — falling back to Groq`);
 
-      if (!hasGroq) {
-        const msg = isRateLimited
-          ? "⏳ Rate limited — wait 30–60 seconds and retry."
-          : "⚠️ Anthropic credit balance too low. Add GROQ_API_KEY to .env.local for a free fallback.";
-        return NextResponse.json({ content: [{ type: "text", text: msg }] });
+        if (!hasGroq) {
+          const msg = isRateLimited
+            ? "⏳ Rate limited — wait 30–60 seconds and retry."
+            : "⚠️ Anthropic credit balance too low. Add GROQ_API_KEY to .env.local for a free fallback.";
+          return NextResponse.json({ content: [{ type: "text", text: msg }] });
+        }
+      } catch (anthropicErr) {
+        // Network error (timeout, DNS, etc.) — fall through to Groq
+        console.warn("Anthropic network error, falling back to Groq:", (anthropicErr as Error).message);
+        if (!hasGroq) {
+          return NextResponse.json({ content: [{ type: "text", text: "⚠️ Could not reach Anthropic API. Check your network or add a GROQ_API_KEY fallback." }] });
+        }
       }
     }
 

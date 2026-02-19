@@ -55,19 +55,29 @@ DATA INTEGRITY — NON-NEGOTIABLE:
 - Prices and DOM must come from the actual listing. Mark any calculated/estimated values clearly as "Est."
 - QCT/OZ: only mark true if you searched and confirmed it. Default to false.
 
+CLARK COUNTY / LAS VEGAS MARKET — SEARCH ALL SUB-MARKETS:
+When the market is Las Vegas / Clark County, always search ALL of these jurisdictions:
+- City of Las Vegas (89101–89121, 89128–89149 zip codes)
+- Henderson, NV (89002, 89011, 89014–89015, 89044, 89074, 89002)
+- North Las Vegas, NV (89030–89032, 89081, 89084–89087)
+- Unincorporated Clark County (89118, 89119, 89123, 89139, 89141, 89178)
+- Boulder City, NV and surrounding rural Clark County parcels
+Search each sub-market by name, e.g. "vacant land Henderson NV 2025", "North Las Vegas land for sale acres 2025", "Clark County unincorporated land parcel".
+A user asking for "2 acre vacant parcel in Clark County" means search ALL of the above.
+
 OFF-MARKET SEARCH TACTICS:
 - Search Regrid.com for parcel data — "regrid [address]" or "regrid [city] vacant land" gives APN, owner, lot size
 - Search PropertyRadar.com for distress indicators — "propertyradar [city] tax default land"
-- Search county assessor tax delinquent lists, notice of default filings, code violation lists
-- Search "[city] land tax delinquent sale", "[county] surplus land auction"
+- Search Clark County Assessor (assessor.clarkcountynv.gov) for tax delinquent parcels
+- Search "Clark County surplus land auction", "Nevada tax lien land sale"
 - Search Crexi.com and LoopNet for parcels 90+ days on market (often motivated sellers)
 - Search for vacant land with long-term same owner (potential off-market outreach candidate)
-- Search "[city] blighted property", "[city] brownfield redevelopment"
+- Search "[city] blighted property", "Clark County brownfield redevelopment"
 
-SEARCH SOURCES: Regrid.com, PropertyRadar.com, Crexi.com, LoopNet.com, Zillow land listings, county assessor/tax sites, surplus auction sites, HUD homes, public records.
+SEARCH SOURCES: Regrid.com, PropertyRadar.com, Crexi.com, LoopNet.com, Zillow land listings, Clark County Assessor, Nevada county tax/surplus sites, public records.
 
 CRITERIA:
-- Minimum 2 acres, target land basis ≤$700,000/acre, land cost ≤10% of total project cost
+- Minimum 2 acres (but also consider contiguous small parcels that together reach 2+ acres), target land basis ≤$700,000/acre, land cost ≤10% of total project cost
 - DEAL TYPES: Affordable Housing, Mixed-Use, Market-Rate Multifamily, Luxury Teardown, Off-Market Land
 
 DEAL STATUS: ✅ Strong Development Opportunity ⚠️ Rezoning Required ❌ Overpriced
@@ -569,12 +579,17 @@ export default function DealFlowDashboard() {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          system: `${agent.systemPrompt}\n\nCURRENT MARKET: ${ctx}\nCURRENT DATE: ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}\n\nADDRESS FORMAT — CRITICAL: Every deal MUST have a real street address with a house/building number (e.g. "4821 W Sahara Ave, Las Vegas, NV 89102"). NEVER use intersection format ("Main St & Flamingo Rd") — those cannot be verified or looked up. If you only find an intersection, skip that deal.\n\nCURRENCY — CRITICAL: Only return ACTIVE, CURRENT listings from the past 12 months. Always include the current year in your search queries. Do NOT present stale listings from 2+ years ago.\n\nIMPORTANT: Always use web_search to find real properties. Prioritize off-market and distressed opportunities. When you find deals, present each one wrapped in <<<DEAL>>>...<<<END_DEAL>>> delimiters so they render as interactive cards. Only leave owner/APN fields blank if you genuinely cannot find them — do not invent them.`,
+          system: `${agent.systemPrompt}\n\nCURRENT MARKET: ${ctx}\nCURRENT DATE: ${new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" })}\n\nMARKET SCOPE: When searching Clark County or Las Vegas, always cover ALL sub-markets: City of Las Vegas, Henderson NV, North Las Vegas NV, and unincorporated Clark County. A question about "Clark County" means search all of these. Never limit to just one city.\n\nQUESTION INTERPRETATION: Interpret every user question as a real estate search task. ANY question about land, parcels, acres, property, deals, or specific locations should trigger web_search immediately. Simple phrases like "2 car vacant parcel" mean search for a 2-acre vacant parcel. Never say you cannot help — always attempt a web search.\n\nADDRESS FORMAT — CRITICAL: Every deal MUST have a real street address with a house/building number (e.g. "4821 W Sahara Ave, Las Vegas, NV 89102"). NEVER use intersection format ("Main St & Flamingo Rd") — those cannot be verified or looked up. If you only find an intersection, skip that deal.\n\nCURRENCY — CRITICAL: Only return ACTIVE, CURRENT listings from the past 12 months. Always include the current year in your search queries. Do NOT present stale listings from 2+ years ago.\n\nIMPORTANT: Always use web_search to find real properties. Prioritize off-market and distressed opportunities. When you find deals, present each one wrapped in <<<DEAL>>>...<<<END_DEAL>>> delimiters so they render as interactive cards. Only leave owner/APN fields blank if you genuinely cannot find them — do not invent them.`,
           messages: [...chat.filter((m) => m.role === "user" || m.role === "assistant"), { role: "user", content: msg }],
         }),
       });
       if (r.status === 429) {
         store.setChatForAgent(activeAgent, (prev) => [...prev, { role: "assistant", content: "⏳ The AI is temporarily rate-limited. Wait 30–60 seconds, then try again." }]);
+        setLoading(false);
+        return;
+      }
+      if (!r.ok) {
+        store.setChatForAgent(activeAgent, (prev) => [...prev, { role: "assistant", content: `⚠️ Server error (${r.status}). The AI is switching to backup — please try your question again.` }]);
         setLoading(false);
         return;
       }
@@ -588,7 +603,7 @@ export default function DealFlowDashboard() {
         ?.map((i) => (i.type === "text" ? i.text : ""))
         .filter(Boolean)
         .join("\n");
-      const reply = text || "Couldn't process that. Try rephrasing.";
+      const reply = text || "⚠️ No response received. Please try again.";
       store.setChatForAgent(activeAgent, (prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (e) {
       const err = e as Error;
